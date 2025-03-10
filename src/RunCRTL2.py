@@ -23,11 +23,11 @@ class RunControl:
         self.HFFIFO = "Empty"
         self.RSTFIFO = "Free"
         self.PLLlocked = "Locked"
-        self.PPS_na = 'PPS Aligned'
-        self.UnixTime_na = 'UnixTime Aligned'
-        self.Clk_extint = "External"
+        self.Tr32_na = 'Tr32 NOT Aligned'
+        self.Tr32_nr = 'Tr32 NOT Received'
+        self.Clk_extint = "Internal"
         self.Clk_1_2 = 1
-        self.Clk_extint_state = "External"
+        self.Clk_extint_state = "Internal"
         self.Clk1_2_state = 1
         self.Clk_ok_1 = "OK"
         self.Clk_ok_2 = "OK"
@@ -35,13 +35,14 @@ class RunControl:
         self.Clk_lost_2 = "CLK NOT lost"
         self.Clk_found_1 = "CLK found"
         self.Clk_found_2 = "CLK found"
-        self.PPS_nr = "PPS NOT received"
-        self.PPSenCH = "Disabled"
+        self.Td_nr = "Td NOT Received"
+        self.Td_na = "Td NOT Aligned"
+        self.Td_par_err = 'Td parity error'
+        self.Tr32enCH = "Disabled"
         self.Rst_MCH = "Free"
         self.CalibADC = "No"
         self.Timeout = 2555
-        self.counterPPS = 0
-        self.UnixTime = 0
+        self.counterTr32 = 0
         self.Runc_Val_Tag0 = 1
         self.Pulser = 0
         self.Pulservalue = 0
@@ -88,7 +89,7 @@ class RunControl:
 * 1)  Reset Fifo                 {self.RSTFIFO!s}\n\
 * 2)  CLK externel/internal      {self.Clk_extint!s}\n\
 * 3)  CLK cable 1/2              {self.Clk_1_2}\n\
-* 4)  PPS channel                {self.PPSenCH!s}\n\
+* 4)  Tr32 channel               {self.Tr32enCH!s}\n\
 * 5)  Reset multichannel         {self.Rst_MCH!s}\n\
 * 6)  Calibration ADC            {self.CalibADC!s}\n\
 * 7)  Timeout FAZIA (ns)         {self.Timeout}\n\
@@ -97,7 +98,6 @@ class RunControl:
 * 10) Trigger Window             {self.WindowValue}\n\
 * 11) Enable Trigger             {self.EnableTrigger!s}\n\
 * 12) Enable Pulser              {self.EnablePulser!s}\n\
-* 13) UnixTime                   {self.UnixTime!s}\n\
 ------ Run Control all channels ------\n\
 * 20) Turn ON Channel -> Channel turned ON {bin(self.PowerEnable)}\n\
 * 21) Turn OFF Channel\n\
@@ -106,14 +106,15 @@ class RunControl:
 * 30) Print Ratemeters \n\
 ------ Read only values ------\n\
 * Overcurrent                    {self.Overcurrent}\n\
-* UnixTime aligned        (WIP)  {self.UnixTime_na!s}\n\
-* PPS counted                    {self.counterPPS!s} \n\
-* PPS reception           (WIP)  {self.PPS_nr!s}\n\
-* PPS aligned             (WIP)  {self.PPS_na!s}\n\
-* Ratemeter                      {self.Ratemeter} Hz\n\
+* Td aligned                     {self.Td_na!s}\n\
+* Td reception                   {self.Td_nr!s}\n\
+* Td parity                      {self.Td_par_err}\n\
+* Tr32 counted                   {self.counterTr32!s} \n\
+* Tr32 reception                 {self.Tr32_nr!s}\n\
+* Tr32 aligned                   {self.Tr32_na!s}\n\
 * Fifo Full                      {self.HFFIFO!s} \n\
 * FIFO data                      {self.FIFOnumber}\n\
-* PLL200MHz                      {self.PLLlocked!s}\n\
+* PLL 250MHz                     {self.PLLlocked!s} and {self.PLL_stable}\n\
 * Deadtime                       {self.Deadtime}%\n\
 * CLK cable used                 {self.Clk1_2_state}\n\
 * CLK source used                {self.Clk_extint_state!s}\n\
@@ -123,6 +124,7 @@ class RunControl:
 * CLK ok 2                       {self.Clk_ok_2!s}\n\
 * CLK lost 2                     {self.Clk_lost_2!s}\n\
 * CLK found 2                    {self.Clk_found_2!s}\n\
+* [R] Read a register\n\
 ")
 
     def LoopRunControll(self) -> None:
@@ -266,16 +268,7 @@ class RunControl:
                 elif dato == "D":
                    self.MiscRW = self.MiscRW & 0xFFFFEFFF
                 self.regs[4*4:(4*4)+4] = int.to_bytes(self.MiscRW, 4, byteorder='little')
-
-            elif key == '13':
-                print("UnixTime value (to set to UTC press R)")
-                dato = input("> ")
-                if dato == 'r' or dato == 'R':
-                    self.UnixTime = int(datetime.now(timezone.utc).timestamp())
-                else:
-                    self.UnixTime = dato
-                self.regs[5*4:(5*4)+4] = int.to_bytes(self.UnixTime, 4, byteorder='little')
-            
+          
             elif key == '20':
                 print("Turn ON which channel? (1 to 19)")
                 dato = int(input("> "))
@@ -312,9 +305,15 @@ class RunControl:
                    dtosend = self.AcqEnable - 2**(dato-1)
                    self.regs[0*4:(0*4)+4] = int.to_bytes(dtosend, 4, byteorder='little')
 
+            elif key == 'r' or key == 'R':
+               print("Which register? (0 to 45)")
+               dato = int(input("> "))
+               print(f'0x{int.from_bytes(self.regs[dato * 4:(dato * 4) + 4], byteorder="little"):08x}')
+               doinfo = False
+
             elif key == '30':
-                self.print_ratemeters()
-                doinfo = False
+               self.print_ratemeters()
+               doinfo = False
             else:
                doinfo = True
             if doinfo:
@@ -343,9 +342,12 @@ class RunControl:
             self.Clk_ok_1 = 'CLK OK' if binNum[24] == '1' else 'CLK NOT OK'
             self.Clk1_2_state = '2' if binNum[23] == '1' else '1'
             self.Clk_extint_state = 'Internal' if binNum[22] == '1' else 'External'
-            self.PPS_na = 'PPS NOT Aligned' if binNum[21] == '1' else 'PPS Aligned'
-            self.PPS_nr = 'PPS NOT Received' if binNum[20] == '1' else 'PPS Received'
-            self.UnixTime_na = 'UnixTime NOT Aligned' if binNum[19] == '1' else 'UnixTime Aligned'
+            self.Tr32_na = 'Tr32 NOT Aligned' if binNum[21] == '1' else 'Tr32 Aligned'
+            self.Tr32_nr = 'Tr32 NOT Received' if binNum[20] == '1' else 'Tr32 Received'
+            self.Td_na = 'Td NOT Aligned' if binNum[21] == '1' else 'Td Aligned'
+            self.Td_nr = 'Td NOT Received' if binNum[20] == '1' else 'Td Received'
+            self.Td_par_err = 'Td parity error' if binNum[19] == '1' else 'Td parity OK'
+            self.PLL_stable = 'Stable' if binNum[18] == '1' else 'Unstable'
             
          elif Cmd == list(self.addrElenco.values())[4]:
             binNum = '{0:032b}'.format(Valore)
@@ -361,7 +363,7 @@ class RunControl:
             self.CalibADC = 'In calibration' if binNum[15] == '1' else 'Not calibrated'
 
          elif Cmd == list(self.addrElenco.values())[5]:
-            self.UnixTime = Valore
+            self.TdValue = Valore
          elif Cmd == list(self.addrElenco.values())[6]:
             self.Runc_Val_Tag0 = Valore
          elif Cmd == list(self.addrElenco.values())[7]:
@@ -378,7 +380,7 @@ class RunControl:
          elif Cmd == list(self.addrElenco.values())[11]:
              self.WindowValue = Valore * 5
          elif Cmd == list(self.addrElenco.values())[12]:
-             self.counterPPS = Valore
+             self.counterTr32 = Valore
          else:
             pass
 
